@@ -297,6 +297,43 @@ class GxEPD2_BW : public GxEPD2_GFX_BASE_CLASS
         _buffer[i] = (_buffer[i] & (0xFF ^ (1 << (7 - x % 8))));
     }
 
+
+    void drawGreyPixel(int16_t x, int16_t y, uint8_t grey)
+    {
+      if ((x < 0) || (x >= width()) || (y < 0) || (y >= height())) return;
+      if (_mirror) x = width() - x - 1;
+      // check rotation, move pixel around if necessary
+      switch (getRotation())
+      {
+        case 1:
+          _swap_(x, y);
+          x = WIDTH - x - 1;
+          break;
+        case 2:
+          x = WIDTH - x - 1;
+          y = HEIGHT - y - 1;
+          break;
+        case 3:
+          _swap_(x, y);
+          y = HEIGHT - y - 1;
+          break;
+      }
+      // transpose partial window to 0,0
+      x -= _pw_x;
+      if (!_reverse) y -= _pw_y;
+      else y = HEIGHT - _pw_y - y - 1;
+      // clip to (partial) window
+      if ((x < 0) || (x >= _pw_w) || (y < 0) || (y >= _pw_h)) return;
+      // adjust for current page
+      y -= _current_page * _page_height;
+      // check if in current page
+      if ((y < 0) || (y >= _page_height)) return;
+      uint16_t i = x / 4 + y * (_pw_w / 4);
+      _buffer[i] = (_buffer[i] & (0xFF ^ (3 << 2 * (3 - x % 4))));
+      _buffer[i] = (_buffer[i] | ((grey >> 6) << 2 * (3 - x % 4)));
+    }
+
+
     void init(uint32_t serial_diag_bitrate = 0) // = 0 : disabled
     {
       epd2.init(serial_diag_bitrate);
@@ -614,6 +651,101 @@ class GxEPD2_BW : public GxEPD2_GFX_BASE_CLASS
             drawPixel(x + i, y + j, color);
           }
         }
+      }
+    }
+
+
+    void drawGreyPixmap(const uint8_t pixmap[], int16_t depth, int16_t x, int16_t y, int16_t w, int16_t h)
+    {
+      switch (depth)
+      {
+        case 1:
+          {
+            int16_t byteWidth = (w + 7) / 8; // Bitmap scanline pad = whole byte
+            uint8_t byte = 0;
+            for (int16_t j = 0; j < h; j++)
+            {
+              for (int16_t i = 0; i < w; i++ )
+              {
+                if (i & 7) byte <<= 1;
+                else
+                {
+#if defined(__AVR) || defined(ESP8266) || defined(ESP32)
+                  byte = pgm_read_byte(&pixmap[j * byteWidth + i / 8]);
+#else
+                  byte = pixmap[j * byteWidth + i / 8];
+#endif
+                }
+                uint16_t color = byte & 0x80 ? 0xFFFF : 0x0000;
+                drawPixel(x + i, y + j, color);
+              }
+            }
+          }
+          break;
+        case 2:
+          {
+            int16_t byteWidth = (w + 3) / 4; // Bitmap scanline pad = whole byte
+            uint8_t byte = 0;
+            for (int16_t j = 0; j < h; j++)
+            {
+              for (int16_t i = 0; i < w; i++ )
+              {
+                if (i & 3) byte <<= 2;
+                else
+                {
+#if defined(__AVR) || defined(ESP8266) || defined(ESP32)
+                  byte = pgm_read_byte(&pixmap[j * byteWidth + i / 4]);
+#else
+                  byte = pixmap[j * byteWidth + i / 4];
+#endif
+                }
+                drawGreyPixel(x + i, y + j, byte & 0xC0);
+              }
+            }
+          }
+          break;
+        case 4:
+          {
+            int16_t byteWidth = (w + 1) / 2; // Bitmap scanline pad = whole byte
+            uint8_t byte = 0;
+            for (int16_t j = 0; j < h; j++)
+            {
+              for (int16_t i = 0; i < w; i++ )
+              {
+                if (i & 1) byte <<= 4;
+                else
+                {
+#if defined(__AVR) || defined(ESP8266) || defined(ESP32)
+                  byte = pgm_read_byte(&pixmap[j * byteWidth + i / 2]);
+#else
+                  byte = pixmap[j * byteWidth + i / 2];
+#endif
+                }
+                uint8_t grey = byte & 0xF0;
+                if ((grey < 0xF0) && (grey >= 0xA0)) grey = 0x80; // light grey demo limit for 4bpp
+                else if ((grey < 0xF0) && (grey > 0x00)) grey = 0x40;  // dark grey
+                drawGreyPixel(x + i, y + j, grey);
+              }
+            }
+          }
+          break;
+        case 8:
+          {
+            uint8_t byte = 0;
+            for (int16_t j = 0; j < h; j++)
+            {
+              for (int16_t i = 0; i < w; i++ )
+              {
+#if defined(__AVR) || defined(ESP8266) || defined(ESP32)
+                byte = pgm_read_byte(&pixmap[j * w + i]);
+#else
+                byte = pixmap[j * w + i];
+#endif
+                drawGreyPixel(x + i, y + j, byte);
+              }
+            }
+          }
+          break;
       }
     }
 
